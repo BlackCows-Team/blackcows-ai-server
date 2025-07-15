@@ -14,13 +14,13 @@ logger = logging.getLogger(__name__)
 
 class AIPredictionService:
     
-    MODEL_VERSION = "v1.0.0"
+    MODEL_VERSION = "v2.0.0"
     
     # 로컬 모델 경로
     BASE_DIR = Path(__file__).parent.parent
     MODELS_DIR = BASE_DIR / "models"
-    MODEL_PATH = MODELS_DIR / "1_random_forest.pkl"
-    SCALER_PATH = MODELS_DIR / "1_scaler.pkl"
+    MILK_YIELD_MODEL_PATH = MODELS_DIR / "milk_yield_rf_v2.pkl"
+    MILK_YIELD_SCALER_PATH = MODELS_DIR / "milk_yield_scaler_v2.pkl"
     
     # 캐시된 모델 (메모리에 한 번만 로드)
     _cached_model = None
@@ -36,18 +36,18 @@ class AIPredictionService:
         try:
             logger.info("모델 로드 시작...")
             
-            if not cls.MODEL_PATH.exists():
-                logger.error(f"모델 파일 없음: {cls.MODEL_PATH}")
+            if not cls.MILK_YIELD_MODEL_PATH.exists():
+                logger.error(f"모델 파일 없음: {cls.MILK_YIELD_MODEL_PATH}")
                 cls._cache_loaded = True
                 return None, None
-            if not cls.SCALER_PATH.exists():
-                logger.error(f"스케일러 파일 없음: {cls.SCALER_PATH}")
+            if not cls.MILK_YIELD_SCALER_PATH.exists():
+                logger.error(f"스케일러 파일 없음: {cls.MILK_YIELD_SCALER_PATH}")
                 cls._cache_loaded = True
                 return None, None
             
             start_time = time.time()
-            cls._cached_scaler = joblib.load(cls.SCALER_PATH)
-            cls._cached_model = joblib.load(cls.MODEL_PATH)
+            cls._cached_scaler = joblib.load(cls.MILK_YIELD_SCALER_PATH)
+            cls._cached_model = joblib.load(cls.MILK_YIELD_MODEL_PATH)
             cls._cache_loaded = True
             
             load_time = time.time() - start_time
@@ -209,8 +209,8 @@ class AIPredictionService:
             start_time = time.time()
             
             # 파일 존재 확인
-            model_exists = cls.MODEL_PATH.exists()
-            scaler_exists = cls.SCALER_PATH.exists()
+            model_exists = cls.MILK_YIELD_MODEL_PATH.exists()
+            scaler_exists = cls.MILK_YIELD_SCALER_PATH.exists()
             
             # 모델 로드 및 테스트
             model_load_success = False
