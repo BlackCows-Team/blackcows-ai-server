@@ -3,9 +3,12 @@
 from fastapi import APIRouter, HTTPException, status
 from schemas.ai_prediction import (
     MilkYieldPredictionRequest,
-    PredictionBatchRequest
+    MastitisPredictionRequest,
+    PredictionBatchRequest,
+    MastitisBatchRequest
 )
 from services.ai_prediction_service import AIPredictionService
+
 
 router = APIRouter(prefix="/ai", tags=["AI 예측"])
 
@@ -16,8 +19,17 @@ router = APIRouter(prefix="/ai", tags=["AI 예측"])
     젖소의 8개 특성(feature)을 바탕으로 착유량을 예측합니다.
 
     **필요한 입력:**
-    - 착유횟수, 전도율, 온도, 유지방비율, 유단백비율
-    - 농후사료섭취량, 착유기측정월, 착유기측정요일
+    - 착유횟수 (milking_frequency) [필수]
+    - 전도율 (conductivity) [필수]
+    - 온도 (temperature) [필수]
+    - 유지방비율 (fat_percentage) [필수]
+    - 유단백비율 (protein_percentage) [필수]
+    - 농후사료섭취량 (concentrate_intake) [필수]
+    - 착유기측정월 (milking_month) [필수]
+    - 착유기측정요일 (milking_day_of_week) [필수]
+    - 젖소 ID (cow_id) [선택]
+    - 예측 기준일 (prediction_date) [선택]
+    - 예측 관련 메모 (notes) [선택]
 
     **결과:**
     - 예상 착유량 (리터)
@@ -29,6 +41,32 @@ async def predict_milk_yield(
     """개별 젖소의 착유량을 예측합니다."""
     return await AIPredictionService.predict_milk_yield(prediction_request)
 
+@router.post("/mastitis/predict",
+             summary="유방염 예측",
+             description="""
+             젖소의 5개 특성(feature)을 바탕으로 유방염 위험도를 예측합니다.
+
+             **필요한 입력:**
+             - 착유량 (milk_yield) [필수]
+             - 전도율 (conductivity) [필수]
+             - 유지방비율 (fat_percentage) [필수]
+             - 유단백비율 (protein_percentage) [필수]
+             - 산차수 (lactation_number) [필수]
+             - 젖소 ID (cow_id) [선택]
+             - 예측 기준일 (prediction_date) [선택]
+             - 예측 관련 메모 (notes) [선택]
+
+             **결과:**
+             - 예측 클래스 (prediction_class): 0=정상, 1=주의, 2=염증 가능성
+             - 신뢰도 점수 (confidence)
+             - 입력값 echo (input_features)
+             - 예측 시간, 모델 버전 등 메타데이터
+             """)
+async def predict_mastitis(
+    prediction_request: MastitisPredictionRequest
+):
+    """개별 젖소 유방염 예측"""
+    return await AIPredictionService.predict_mastitis(prediction_request)
 
 @router.post(
     "/milk-yield/batch-predict",
@@ -45,6 +83,15 @@ async def predict_milk_yield_batch(
 ):
     """여러 젖소의 착유량을 일괄 예측합니다."""
     return await AIPredictionService.predict_milk_yield_batch(batch_request)
+
+@router.post("/mastitis/batch-predict",
+             summary="다중 젖소 유방염 예측",
+             description="여러 젖소의 유방염 위험도를 한번에 예측합니다.")
+async def predict_mastitis_batch(
+    batch_request: MastitisBatchRequest
+):
+    """다중 젖소 유방염 일괄 예측"""
+    return await AIPredictionService.predict_mastitis_batch(batch_request)
 
 @router.get(
     "/model-health",

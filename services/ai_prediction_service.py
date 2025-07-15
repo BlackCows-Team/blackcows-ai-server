@@ -21,43 +21,62 @@ class AIPredictionService:
     MODELS_DIR = BASE_DIR / "models"
     MILK_YIELD_MODEL_PATH = MODELS_DIR / "milk_yield_rf_v2.pkl"
     MILK_YIELD_SCALER_PATH = MODELS_DIR / "milk_yield_scaler_v2.pkl"
+    MASTITIS_MODEL_PATH = MODELS_DIR / "mastitis_rf_v1.pkl"
+    MASTITIS_SCALER_PATH = MODELS_DIR / "mastitis_scaler_v1.pkl"
     
     # 캐시된 모델 (메모리에 한 번만 로드)
-    _cached_model = None
-    _cached_scaler = None
-    _cache_loaded = False
+    _milk_yield_model = None
+    _milk_yield_scaler = None
+    _milk_yield_cache_loaded = False
+    _mastitis_model = None
+    _mastitis_scaler = None
+    _mastitis_cache_loaded = False
     
     @classmethod
     def _load_models(cls):
         """로컬에서 모델 로드 (실패해도 서버는 계속 실행)"""
-        if cls._cache_loaded:
-            return cls._cached_model, cls._cached_scaler
+        if cls._milk_yield_cache_loaded:
+            return cls._milk_yield_model, cls._milk_yield_scaler
         
         try:
             logger.info("모델 로드 시작...")
             
             if not cls.MILK_YIELD_MODEL_PATH.exists():
                 logger.error(f"모델 파일 없음: {cls.MILK_YIELD_MODEL_PATH}")
-                cls._cache_loaded = True
+                cls._milk_yield_cache_loaded = True
                 return None, None
             if not cls.MILK_YIELD_SCALER_PATH.exists():
                 logger.error(f"스케일러 파일 없음: {cls.MILK_YIELD_SCALER_PATH}")
-                cls._cache_loaded = True
+                cls._milk_yield_cache_loaded = True
                 return None, None
             
             start_time = time.time()
-            cls._cached_scaler = joblib.load(cls.MILK_YIELD_SCALER_PATH)
-            cls._cached_model = joblib.load(cls.MILK_YIELD_MODEL_PATH)
-            cls._cache_loaded = True
+            cls._milk_yield_scaler = joblib.load(cls.MILK_YIELD_SCALER_PATH)
+            cls._milk_yield_model = joblib.load(cls.MILK_YIELD_MODEL_PATH)
+            cls._milk_yield_cache_loaded = True
             
             load_time = time.time() - start_time
             logger.info(f"모델 로드 완료: {load_time:.2f}초")
             
-            return cls._cached_model, cls._cached_scaler
+            return cls._milk_yield_model, cls._milk_yield_scaler
             
         except Exception as e:
             logger.error(f"모델 로드 실패: {e}")
-            cls._cache_loaded = True
+            cls._milk_yield_cache_loaded = True
+            return None, None
+
+    @classmethod
+    def _load_mastitis_models(cls):
+        if cls._mastitis_cache_loaded:
+            return cls._mastitis_model, cls._mastitis_scaler
+        try:
+            cls._mastitis_scaler = joblib.load(cls.MASTITIS_SCALER_PATH)
+            cls._mastitis_model = joblib.load(cls.MASTITIS_MODEL_PATH)
+            cls._mastitis_cache_loaded = True
+            return cls._mastitis_model, cls._mastitis_scaler
+        except Exception as e:
+            logger.error(f"유방염 모델 로드 실패: {e}")
+            cls._mastitis_cache_loaded = True
             return None, None
     
     @classmethod
@@ -102,6 +121,17 @@ class AIPredictionService:
             request.milking_day_of_week
         ]).reshape(1, -1)
         
+        return features
+
+    @classmethod
+    def _prepare_mastitis_features(cls, request) -> np.ndarray:
+        features = np.array([
+            request.milk_yield,
+            request.conductivity,
+            request.fat_percentage,
+            request.protein_percentage,
+            request.lactation_number
+        ]).reshape(1, -1)
         return features
     
     @classmethod
@@ -162,7 +192,37 @@ class AIPredictionService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="예측 처리 중 오류가 발생했습니다"
             )
-    
+
+    @classmethod
+    async def predict_mastitis(cls, request) -> dict:
+        start_time = time.time()
+        model, scaler = cls._load_mastitis_models()
+        if model is None or scaler is None:
+            raise HTTPException(status_code=503, detail="유방염 모델을 사용할 수 없습니다")
+        features = cls._prepare_mastitis_features(request)
+        scaled = scaler.transform(features)
+        pred_class = int(model.predict(scaled)[0])
+        confidence = cls._calculate_confidence(model, scaled)
+        processing_time = (time.time() - start_time) * 1000
+        LABELS = ["정상", "주의", "염증 가능성 + 유방염 의심"]
+        return {
+            "prediction_id": str(uuid.uuid4()),
+            "cow_id": getattr(request, 'cow_id', None),
+            "prediction_class": pred_class,
+            "prediction_class_label": LABELS[pred_class],
+            "confidence": confidence,
+            "input_features": {
+                "착유량": request.milk_yield,
+                "전도율": request.conductivity,
+                "유지방비율": request.fat_percentage,
+                "유단백비율": request.protein_percentage,
+                "산차수": request.lactation_number
+            },
+            "model_version": "mastitis_rf_v1",
+            "prediction_time": datetime.now().isoformat(),
+            "processing_time_ms": round(processing_time, 2)
+        }
+
     @classmethod
     async def predict_milk_yield_batch(cls, batch_request) -> Dict[str, Any]:
         """다중 젖소 착유량 일괄 예측"""
@@ -201,6 +261,30 @@ class AIPredictionService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="배치 예측 처리 중 오류가 발생했습니다"
             )
+
+    @classmethod
+    async def predict_mastitis_batch(cls, batch_request) -> dict:
+        batch_id = str(uuid.uuid4())
+        start_time = time.time()
+        predictions, successful, failed = [], 0, 0
+        for request in batch_request.predictions:
+            try:
+                prediction = await cls.predict_mastitis(request)
+                predictions.append(prediction)
+                successful += 1
+            except Exception as e:
+                logger.error(f"배치 유방염 예측 실패: {e}")
+                failed += 1
+        total_time = time.time() - start_time
+        return {
+            "batch_id": batch_id,
+            "total_predictions": len(batch_request.predictions),
+            "successful_predictions": successful,
+            "failed_predictions": failed,
+            "predictions": predictions,
+            "batch_created_at": datetime.now().isoformat(),
+            "total_processing_time_ms": round(total_time * 1000, 2)
+        }
     
     @classmethod
     async def check_model_health(cls) -> Dict[str, Any]:
@@ -253,11 +337,11 @@ class AIPredictionService:
                     "scaler_file_exists": scaler_exists,
                     "model_load_success": model_load_success,
                     "prediction_test_success": prediction_test_success,
-                    "cache_loaded": cls._cache_loaded
+                    "cache_loaded": cls._milk_yield_cache_loaded
                 },
                 "model_info": {
                     "version": cls.MODEL_VERSION,
-                    "cached": cls._cache_loaded,
+                    "cached": cls._milk_yield_cache_loaded,
                     "available": model_load_success
                 }
             }
