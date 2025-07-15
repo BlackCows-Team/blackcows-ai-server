@@ -5,13 +5,16 @@ from schemas.ai_prediction import (
     MilkYieldPredictionRequest,
     MastitisPredictionRequest,
     PredictionBatchRequest,
-    MastitisBatchRequest
+    MastitisBatchRequest,
+    SomaticCellCountPredictionRequest,
+    SomaticCellCountBatchRequest
 )
 from services.ai_prediction_service import AIPredictionService
 
 
 router = APIRouter(prefix="/ai", tags=["AI 예측"])
 
+# 1. 착유량 예측
 @router.post(
     "/milk-yield/predict",
     summary="착유량 예측",
@@ -41,6 +44,7 @@ async def predict_milk_yield(
     """개별 젖소의 착유량을 예측합니다."""
     return await AIPredictionService.predict_milk_yield(prediction_request)
 
+# 2. 유방염 예측
 @router.post("/mastitis/predict",
              summary="유방염 예측",
              description="""
@@ -68,6 +72,37 @@ async def predict_mastitis(
     """개별 젖소 유방염 예측"""
     return await AIPredictionService.predict_mastitis(prediction_request)
 
+# 3. 체세포수 기반 유방염 예측
+@router.post(
+    "/mastitis/predict-by-scc",
+    summary="체세포수 기반 유방염 예측",
+    description="""
+    체세포수를 바탕으로 유방염 위험도를 예측합니다.
+    
+    **분류 기준:**
+    - 정상: ≤ 100개/ml (등급 0)
+    - 주의: 101-300개/ml (등급 1)
+    - 염증 가능성 + 유방염 의심: > 300개/ml (등급 2)
+    
+    **필요한 입력:**
+    - 체세포수 (somatic_cell_count) [필수] - 개/ml 단위
+    - 젖소 ID (cow_id) [선택]
+    - 측정일 (measurement_date) [선택]
+    - 메모 (notes) [선택]
+    
+    **결과:**
+    - 예측 등급 (0: 정상, 1: 주의, 2: 염증 가능성)
+    - 등급별 설명 및 권장사항
+    - 분류 기준 정보
+    """
+)
+async def predict_mastitis_by_scc(
+    prediction_request: SomaticCellCountPredictionRequest
+):
+    """체세포수 기반 개별 젖소 유방염 예측"""
+    return await AIPredictionService.predict_mastitis_by_scc(prediction_request)
+
+# 4. 다중 착유량 예측
 @router.post(
     "/milk-yield/batch-predict",
     summary="다중 젖소 착유량 예측",
@@ -84,6 +119,7 @@ async def predict_milk_yield_batch(
     """여러 젖소의 착유량을 일괄 예측합니다."""
     return await AIPredictionService.predict_milk_yield_batch(batch_request)
 
+# 5. 다중 유방염 예측
 @router.post("/mastitis/batch-predict",
              summary="다중 젖소 유방염 예측",
              description="여러 젖소의 유방염 위험도를 한번에 예측합니다.")
@@ -93,6 +129,28 @@ async def predict_mastitis_batch(
     """다중 젖소 유방염 일괄 예측"""
     return await AIPredictionService.predict_mastitis_batch(batch_request)
 
+# 6. 다중 체세포수 기반 유방염 예측
+@router.post(
+    "/mastitis/batch-predict-by-scc", 
+    summary="다중 젖소 체세포수 기반 유방염 예측",
+    description="""
+    여러 젖소의 체세포수를 바탕으로 유방염 위험도를 일괄 예측합니다.
+    
+    **배치 처리 제한:**
+    - 최대 1000개까지 한 번에 처리 가능
+    - 개별 실패 항목도 결과에 포함되어 반환
+    
+    **예측 항목:**
+    - 리스트 형태의 `SomaticCellCountPredictionRequest` 입력
+    """
+)
+async def predict_mastitis_scc_batch(
+    batch_request: SomaticCellCountBatchRequest
+):
+    """다중 젖소 체세포수 기반 유방염 일괄 예측"""
+    return await AIPredictionService.predict_mastitis_scc_batch(batch_request)
+
+# 기타 엔드포인트 (순서 뒤로)
 @router.get(
     "/model-health",
     summary="모델 상태 확인",
@@ -108,3 +166,74 @@ async def predict_mastitis_batch(
 async def check_model_health():
     """모델 파일 존재, 로드 여부, 테스트 예측 가능 여부를 점검합니다."""
     return await AIPredictionService.check_model_health()
+
+@router.get(
+    "/mastitis/scc-classification-info",
+    summary="체세포수 분류 기준 정보",
+    description="""
+    체세포수 기반 유방염 분류 기준과 각 등급별 설명을 제공합니다.
+    
+    **제공 정보:**
+    - 각 등급별 체세포수 범위
+    - 등급별 설명 및 권장사항
+    - 분류 기준의 배경 정보
+    - 주의사항 및 참고자료
+    """
+)
+async def get_scc_classification_info():
+    """체세포수 분류 기준 및 설명 정보 제공"""
+    return await AIPredictionService.get_scc_classification_info()
+
+# 테스트용 엔드포인트 (개발/디버깅용)
+from datetime import datetime
+@router.post(
+    "/mastitis/test-scc-prediction",
+    summary="체세포수 예측 테스트",
+    description="샘플 데이터로 체세포수 기반 예측을 테스트합니다 (개발용)"
+)
+async def test_scc_prediction():
+    """체세포수 예측 기능 테스트"""
+    try:
+        # 샘플 테스트 데이터
+        test_cases = [
+            {"scc": 50, "expected": "정상"},
+            {"scc": 150, "expected": "주의"}, 
+            {"scc": 400, "expected": "염증 가능성"}
+        ]
+        
+        results = []
+        for case in test_cases:
+            class TestRequest:
+                def __init__(self, scc):
+                    self.cow_id = f"test_cow_{scc}"
+                    self.somatic_cell_count = scc
+                    self.measurement_date = None
+                    self.notes = f"테스트 케이스 - {case['expected']}"
+            
+            test_request = TestRequest(case["scc"])
+            result = await AIPredictionService.predict_mastitis_by_scc(test_request)
+            
+            results.append({
+                "input_scc": case["scc"],
+                "expected_label": case["expected"],
+                "predicted_label": result["prediction_class_label"],
+                "predicted_class": result["prediction_class"],
+                "test_passed": result["prediction_class_label"] == case["expected"],
+                "processing_time_ms": result["processing_time_ms"]
+            })
+        
+        return {
+            "test_status": "completed",
+            "total_tests": len(test_cases),
+            "passed_tests": sum(1 for r in results if r["test_passed"]),
+            "failed_tests": sum(1 for r in results if not r["test_passed"]),
+            "test_results": results,
+            "test_timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "test_status": "failed",
+            "error": str(e),
+            "test_timestamp": datetime.now().isoformat()
+        }

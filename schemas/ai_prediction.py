@@ -68,3 +68,42 @@ class MastitisPredictionRequest(BaseModel):
 class MastitisBatchRequest(BaseModel):
     predictions: List[MastitisPredictionRequest] = Field(..., description="유방염 예측 요청 목록")
     batch_name: Optional[str] = Field(None, description="배치 이름")
+    
+
+# 체세포수 기반 유방염 예측 요청 스키마
+class SomaticCellCountPredictionRequest(BaseModel):
+    cow_id: Optional[str] = Field(None, description="젖소 ID (선택사항)")
+    somatic_cell_count: float = Field(..., description="체세포수 (개/ml)", ge=0)
+    measurement_date: Optional[str] = Field(None, description="측정일 (YYYY-MM-DD)")
+    notes: Optional[str] = Field(None, description="예측 관련 메모")
+    
+    @validator('measurement_date')
+    def validate_measurement_date(cls, v):
+        if v is not None and len(v.strip()) > 0:
+            try:
+                datetime.strptime(v.strip(), '%Y-%m-%d')
+                return v.strip()
+            except ValueError:
+                raise ValueError('측정일은 YYYY-MM-DD 형식으로 입력해주세요')
+        return v
+    
+    @validator('somatic_cell_count')
+    def validate_scc(cls, v):
+        if v < 0:
+            raise ValueError('체세포수는 0 이상의 값이어야 합니다')
+        if v > 10000:  # 일반적으로 매우 높은 값에 대한 경고
+            logger.warning(f"매우 높은 체세포수 값: {v}개/ml")
+        return v
+
+# 체세포수 기반 배치 예측 요청 스키마
+class SomaticCellCountBatchRequest(BaseModel):
+    predictions: List[SomaticCellCountPredictionRequest] = Field(..., description="체세포수 예측 요청 목록")
+    batch_name: Optional[str] = Field(None, description="배치 이름")
+    
+    @validator('predictions')
+    def validate_predictions_count(cls, v):
+        if len(v) == 0:
+            raise ValueError('최소 1개 이상의 예측 요청이 필요합니다')
+        if len(v) > 1000:  # 배치 처리 한계 설정
+            raise ValueError('한 번에 처리할 수 있는 최대 요청 개수는 1000개입니다')
+        return v

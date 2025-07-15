@@ -1,14 +1,344 @@
 # BlackCows AI 예측 서버
 
-젖소 착유량 예측을 위한 경량화된 AI 모델 서버입니다.
+젖소 착유량 및 유방염 예측을 위한 경량화된 AI 모델 서버입니다.
 
-## 🤖 AI 예측 API (`/ai`) - ⭐ 핵심 기능
+## 🗂️ 구현된 AI 예측 API 요약
 
-| Method | Endpoint | 설명 | 필수 필드 | 응답 |
-|--------|----------|------|----------|------|
-| `POST` | `/ai/milk-yield/predict` | **개별 젖소 착유량 예측** | `milking_frequency`, `conductivity`, `temperature`, `fat_percentage`, `protein_percentage`, `concentrate_intake`, `milking_month`, `milking_day_of_week` | 예측된 착유량 및 확신도 |
-| `POST` | `/ai/milk-yield/batch-predict` | **다중 젖소 일괄 예측** | `predictions` (예측 요청 배열) | 배치 예측 결과 |
-| `GET` | `/ai/model-health` | **모델 상태 확인** | 없음 | 모델 파일 존재, 로드, 테스트 상태 |
+| Method | Endpoint | 설명 | 필수 필드 | 옵션 필드 | 응답 주요 필드 |
+|--------|----------|------|----------|-----------|----------------|
+| POST | /ai/milk-yield/predict | 개별 젖소 착유량 예측 | milking_frequency, conductivity, temperature, fat_percentage, protein_percentage, concentrate_intake, milking_month, milking_day_of_week | cow_id, prediction_date, notes | predicted_milk_yield, confidence, input_features, model_version, prediction_time |
+| POST | /ai/mastitis/predict | 개별 젖소 유방염 예측 | milk_yield, conductivity, fat_percentage, protein_percentage, lactation_number | cow_id, prediction_date, notes | prediction_class, prediction_class_label, confidence, input_features, model_version |
+| POST | /ai/mastitis/predict-by-scc | 체세포수 기반 유방염 예측 | somatic_cell_count | cow_id, measurement_date, notes | prediction_class, prediction_class_label, confidence, description, input_features, classification_criteria |
+| POST | /ai/milk-yield/batch-predict | 다중 젖소 착유량 예측 | predictions (MilkYieldPredictionRequest 배열) | batch_name | predictions, batch_id, total_predictions |
+| POST | /ai/mastitis/batch-predict | 다중 젖소 유방염 예측 | predictions (MastitisPredictionRequest 배열) | batch_name | predictions, batch_id, total_predictions |
+| POST | /ai/mastitis/batch-predict-by-scc | 다중 젖소 체세포수 기반 유방염 예측 | predictions (SomaticCellCountPredictionRequest 배열) | batch_name | predictions, batch_id, total_predictions |
+| GET | /ai/mastitis/scc-classification-info | 체세포수 분류 기준 정보 | 없음 | 없음 | criteria, notes, references |
+| GET | /ai/model-health | 모델 상태 확인 | 없음 | 없음 | status, checks, model_info |
+
+---
+
+## 📌 각 엔드포인트별 요청/응답 예시
+
+### 1. 개별 젖소 착유량 예측
+- **POST** `/ai/milk-yield/predict`
+- **요청 예시**
+```json
+{
+  "cow_id": "cow_123",
+  "milking_frequency": 2,
+  "conductivity": 7.5,
+  "temperature": 38.5,
+  "fat_percentage": 3.8,
+  "protein_percentage": 3.2,
+  "concentrate_intake": 3.5,
+  "milking_month": 6,
+  "milking_day_of_week": 1,
+  "prediction_date": "2024-06-01",
+  "notes": "테스트"
+}
+```
+- **응답 예시**
+```json
+{
+  "prediction_id": "uuid-123",
+  "cow_id": "cow_123",
+  "predicted_milk_yield": 25.5,
+  "confidence": 85.2,
+  "input_features": {
+    "착유횟수": 2,
+    "전도율": 7.5,
+    "온도": 38.5,
+    "유지방비율": 3.8,
+    "유단백비율": 3.2,
+    "농후사료섭취량": 3.5,
+    "착유기측정월": 6,
+    "착유기측정요일": 1
+  },
+  "model_version": "v2.0.0",
+  "prediction_time": "2024-06-01T10:30:00",
+  "processing_time_ms": 45.2
+}
+```
+
+---
+
+### 2. 개별 젖소 유방염 예측
+- **POST** `/ai/mastitis/predict`
+- **요청 예시**
+```json
+{
+  "cow_id": "cow_123",
+  "milk_yield": 25.5,
+  "conductivity": 7.5,
+  "fat_percentage": 3.8,
+  "protein_percentage": 3.2,
+  "lactation_number": 2,
+  "prediction_date": "2024-06-01",
+  "notes": "테스트"
+}
+```
+- **응답 예시**
+```json
+{
+  "prediction_id": "uuid-456",
+  "cow_id": "cow_123",
+  "prediction_class": 1,
+  "prediction_class_label": "주의",
+  "confidence": 92.1,
+  "input_features": {
+    "착유량": 25.5,
+    "전도율": 7.5,
+    "유지방비율": 3.8,
+    "유단백비율": 3.2,
+    "산차수": 2
+  },
+  "model_version": "mastitis_rf_v1",
+  "prediction_time": "2024-06-01T10:31:00",
+  "processing_time_ms": 38.7
+}
+```
+
+---
+
+### 3. 체세포수 기반 유방염 예측
+- **POST** `/ai/mastitis/predict-by-scc`
+- **요청 예시**
+```json
+{
+  "cow_id": "cow_123",
+  "somatic_cell_count": 150,
+  "measurement_date": "2024-06-01",
+  "notes": "테스트"
+}
+```
+- **응답 예시**
+```json
+{
+  "prediction_id": "uuid-789",
+  "cow_id": "cow_123",
+  "prediction_method": "somatic_cell_count",
+  "prediction_class": 1,
+  "prediction_class_label": "주의",
+  "confidence": 95.0,
+  "description": "체세포수가 약간 증가한 상태입니다. 주의 깊은 관찰이 필요합니다.",
+  "input_features": {
+    "체세포수": 150,
+    "단위": "개/ml"
+  },
+  "classification_criteria": {
+    "정상": "≤ 100개/ml",
+    "주의": "101-300개/ml",
+    "염증_가능성": "> 300개/ml"
+  },
+  "prediction_time": "2024-06-01T10:32:00",
+  "processing_time_ms": 5.1
+}
+```
+
+---
+
+### 4. 다중 젖소 착유량 예측
+- **POST** `/ai/milk-yield/batch-predict`
+- **요청 예시**
+```json
+{
+  "predictions": [
+    {
+      "cow_id": "cow_123",
+      "milking_frequency": 2,
+      "conductivity": 7.5,
+      "temperature": 38.5,
+      "fat_percentage": 3.8,
+      "protein_percentage": 3.2,
+      "concentrate_intake": 3.5,
+      "milking_month": 6,
+      "milking_day_of_week": 1
+    },
+    {
+      "cow_id": "cow_456",
+      "milking_frequency": 3,
+      "conductivity": 8.0,
+      "temperature": 38.2,
+      "fat_percentage": 4.0,
+      "protein_percentage": 3.5,
+      "concentrate_intake": 4.0,
+      "milking_month": 6,
+      "milking_day_of_week": 2
+    }
+  ],
+  "batch_name": "테스트 배치"
+}
+```
+- **응답 예시**
+```json
+{
+  "batch_id": "uuid-batch-1",
+  "total_predictions": 2,
+  "successful_predictions": 2,
+  "failed_predictions": 0,
+  "predictions": [
+    { /* 개별 예측 결과 */ },
+    { /* 개별 예측 결과 */ }
+  ],
+  "batch_created_at": "2024-06-01T10:33:00",
+  "total_processing_time_ms": 90.5
+}
+```
+
+---
+
+### 5. 다중 젖소 유방염 예측
+- **POST** `/ai/mastitis/batch-predict`
+- **요청 예시**
+```json
+{
+  "predictions": [
+    {
+      "cow_id": "cow_123",
+      "milk_yield": 25.5,
+      "conductivity": 7.5,
+      "fat_percentage": 3.8,
+      "protein_percentage": 3.2,
+      "lactation_number": 2
+    },
+    {
+      "cow_id": "cow_456",
+      "milk_yield": 28.0,
+      "conductivity": 8.0,
+      "fat_percentage": 4.0,
+      "protein_percentage": 3.5,
+      "lactation_number": 3
+    }
+  ],
+  "batch_name": "유방염 배치"
+}
+```
+- **응답 예시**
+```json
+{
+  "batch_id": "uuid-batch-2",
+  "total_predictions": 2,
+  "successful_predictions": 2,
+  "failed_predictions": 0,
+  "predictions": [
+    { /* 개별 예측 결과 */ },
+    { /* 개별 예측 결과 */ }
+  ],
+  "batch_created_at": "2024-06-01T10:34:00",
+  "total_processing_time_ms": 80.2
+}
+```
+
+---
+
+### 6. 다중 젖소 체세포수 기반 유방염 예측
+- **POST** `/ai/mastitis/batch-predict-by-scc`
+- **요청 예시**
+```json
+{
+  "predictions": [
+    {
+      "cow_id": "cow_123",
+      "somatic_cell_count": 150
+    },
+    {
+      "cow_id": "cow_456",
+      "somatic_cell_count": 350
+    }
+  ],
+  "batch_name": "체세포수 배치"
+}
+```
+- **응답 예시**
+```json
+{
+  "batch_id": "uuid-batch-3",
+  "prediction_method": "somatic_cell_count_batch",
+  "total_predictions": 2,
+  "successful_predictions": 2,
+  "failed_predictions": 0,
+  "predictions": [
+    { /* 개별 예측 결과 */ },
+    { /* 개별 예측 결과 */ }
+  ],
+  "batch_created_at": "2024-06-01T10:35:00",
+  "total_processing_time_ms": 12.3,
+  "average_processing_time_ms": 6.15
+}
+```
+
+---
+
+### 7. 체세포수 분류 기준 정보
+- **GET** `/ai/mastitis/scc-classification-info`
+- **응답 예시**
+```json
+{
+  "classification_method": "somatic_cell_count",
+  "unit": "개/ml",
+  "criteria": {
+    "정상": {
+      "range": "≤ 100",
+      "class": 0,
+      "description": "체세포수가 정상 범위로 건강한 상태",
+      "color": "green",
+      "action": "정기 모니터링 지속"
+    },
+    "주의": {
+      "range": "101-300",
+      "class": 1,
+      "description": "체세포수가 약간 증가한 상태로 주의 필요",
+      "color": "yellow",
+      "action": "위생 관리 강화 및 모니터링"
+    },
+    "염증_가능성": {
+      "range": "> 300",
+      "class": 2,
+      "description": "체세포수가 높아 유방염 의심",
+      "color": "red",
+      "action": "즉시 수의사 진료 필요"
+    }
+  },
+  "notes": [
+    "체세포수는 우유 1ml당 체세포의 개수를 나타냅니다",
+    "체세포수가 높을수록 유방염 가능성이 증가합니다",
+    "이 기준은 일반적인 가이드라인이며, 수의사의 전문적인 진단이 필요합니다",
+    "개체별, 환경별 차이를 고려하여 종합적으로 판단해야 합니다"
+  ],
+  "references": [
+    "대한수의사회 유방염 진단 가이드라인",
+    "낙농진흥회 우유 품질 관리 기준"
+  ]
+}
+```
+
+---
+
+### 8. 모델 상태 확인
+- **GET** `/ai/model-health`
+- **응답 예시**
+```json
+{
+  "status": "healthy",
+  "message": "AI 예측 서비스가 정상 작동 중입니다",
+  "timestamp": "2024-06-01T10:36:00",
+  "response_time_ms": 12.5,
+  "checks": {
+    "model_file_exists": true,
+    "scaler_file_exists": true,
+    "model_load_success": true,
+    "prediction_test_success": true,
+    "cache_loaded": true
+  },
+  "model_info": {
+    "version": "v2.0.0",
+    "cached": true,
+    "available": true
+  }
+}
+```
+
+---
 
 ## 📋 프로젝트 개요
 
@@ -75,29 +405,25 @@ POST /ai/milk-yield/predict
   "milking_day_of_week": 1
 }
 ```
+- **응답 주요 필드**: predicted_milk_yield, confidence, input_features, model_version, prediction_time
 
-**응답:**
+---
+
+### 2. 개별 젖소 유방염 예측
+- **POST** `/ai/mastitis/predict`
+- **요청 예시**
 ```json
 {
   "prediction_id": "uuid-123",
   "cow_id": "cow_123",
-  "predicted_milk_yield": 25.5,
-  "confidence": 85.2,
-  "input_features": {
-    "착유횟수": 2,
-    "전도율": 7.5,
-    "온도": 38.5,
-    "유지방비율": 3.8,
-    "유단백비율": 3.2,
-    "농후사료섭취량": 3.5,
-    "착유기측정월": 6,
-    "착유기측정요일": 1
-  },
-  "model_version": "v1.0.0",
-  "prediction_time": "2024-01-15T10:30:00",
-  "processing_time_ms": 45.2
+  "milk_yield": 25.5,
+  "conductivity": 7.5,
+  "fat_percentage": 3.8,
+  "protein_percentage": 3.2,
+  "lactation_number": 2
 }
 ```
+- **응답 주요 필드**: prediction_class, prediction_class_label, confidence, input_features, model_version
 
 #### 2. 다중 젖소 일괄 예측
 ```http
