@@ -147,3 +147,8 @@ server.log
 
 # Cloudflare Tunnel
 cloudflared-linux-amd64.deb 
+
+
+# venv 
+*/ai_server_env/*
+ai_server_env/*

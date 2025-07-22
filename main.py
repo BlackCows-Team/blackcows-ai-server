@@ -113,7 +113,7 @@ async def health_check():
     """서버 상태 확인"""
     return {
         "status": "healthy",
-        "service": "BlackCows AI Server",
+        "service": "BlackCows AI Server 하이요",
         "version": "1.0.0"
     }
 
